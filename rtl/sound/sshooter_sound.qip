@@ -1,0 +1,5 @@
+set_global_assignment -name QIP_FILE rtl/sound/JT12/hdl/jt03.qip
+set_global_assignment -name VERILOG_FILE rtl/sound/filters/audio_iir_filter.v
+set_global_assignment -name VERILOG_FILE rtl/sound/filters/jt49_dcrm2.v
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/sound/filters/sshooter_fm_lpf.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/sound/filters/sshooter_ssg_lpf.sv
