@@ -332,6 +332,7 @@ k005849 u8E
 	.SD(spriterom_D),
 	.HCTR(h_center),
 	.VCTR(v_center),
+	.SPFL(1),
 	
 	.hs_address(hs_address),
 	.hs_data_out(hs_data_out),
