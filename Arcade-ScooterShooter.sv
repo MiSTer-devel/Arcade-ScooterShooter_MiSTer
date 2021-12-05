@@ -303,6 +303,11 @@ reg btn_down     = 0;
 reg btn_left     = 0;
 reg btn_right    = 0;
 reg btn_fire     = 0;
+reg btn_up2      = 0;
+reg btn_down2    = 0;
+reg btn_left2    = 0;
+reg btn_right2   = 0;
+reg btn_fire2    = 0;
 reg btn_coin1    = 0;
 reg btn_coin2    = 0;
 reg btn_1p_start = 0;
@@ -328,7 +333,13 @@ always @(posedge CLK_49M) begin
 			'h72: btn_down    <= pressed; // down
 			'h6B: btn_left    <= pressed; // left
 			'h74: btn_right   <= pressed; // right
-			'h14: btn_fire    <= pressed; // ctrl						
+			'h14: btn_fire    <= pressed; // ctrl	
+
+			'h1d: btn_up2     <= pressed; // w
+			'h1b: btn_down2   <= pressed; // s
+			'h1c: btn_left2   <= pressed; // a
+			'h23: btn_right2  <= pressed; // d
+			'h2a: btn_fire2   <= pressed; // v																					
 		endcase
 	end
 end
@@ -343,11 +354,11 @@ wire m_right1   = btn_right   | joystick_0[0];
 wire m_fire1    = btn_fire    | joystick_0[4];
 
 //Player 2
-wire m_up2      = btn_up      | joystick_1[3];
-wire m_down2    = btn_down    | joystick_1[2];
-wire m_left2    = btn_left    | joystick_1[1];
-wire m_right2   = btn_right   | joystick_1[0];
-wire m_fire2    = btn_fire    | joystick_1[4];
+wire m_up2      = btn_up2      | joystick_1[3];
+wire m_down2    = btn_down2    | joystick_1[2];
+wire m_left2    = btn_left2    | joystick_1[1];
+wire m_right2   = btn_right2   | joystick_1[0];
+wire m_fire2    = btn_fire2    | joystick_1[4];
 
 //Start/coin
 wire m_start1   = btn_1p_start | joystick_0[5];
