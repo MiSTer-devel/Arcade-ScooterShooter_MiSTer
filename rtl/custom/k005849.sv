@@ -192,7 +192,7 @@ always_ff @(posedge CK49) begin
 						frame_odd_even <= ~frame_odd_even;
 						v_cnt <= v_cnt + 9'd1;
 					end
-					261: begin
+					263: begin
 						v_cnt <= 9'd0;
 					end
 					default: v_cnt <= v_cnt + 9'd1;

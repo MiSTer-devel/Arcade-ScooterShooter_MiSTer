@@ -1,0 +1,33 @@
+#Version
+v1
+
+#Original Filename
+#SShooter Speaker LPF.txt
+
+#Filter Description
+#6.6KHz 1st-order LPF for Scooter Shooter core volume-matched to PCB
+
+#Sampling Frequency
+7056000
+
+#Base gain
+0.00814529743125962102
+
+#gain scale for X0
+1
+
+#gain scale for X1
+0
+
+#gain scale for X2
+0
+
+#gain scale for Y0
+-0.99414007379046065438
+
+#gain scale for Y1
+0
+
+#gain scale for Y2
+0
+

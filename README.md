@@ -16,6 +16,7 @@ An FPGA implementation of Scooter Shooter for the MiSTer platform
 - T80s CPU by Daniel Wallner with fixes by MikeJ, Sorgelig, and others
 - YM2203 implementation using JT03 by Jotego
 - Audio filtering, including the PCB's switchable low-pass filters
+- Option for normalized video timings to use with picky HDTVs and monitors (underclocks the game by ~1%)
 
 ## Installation
 Place `*.rbf` into the "_Arcade/cores" folder on your SD card.  Then, place `*.mra` into the "_Arcade" folder and ROM files from MAME into "games/mame".
@@ -53,9 +54,6 @@ Quick reference for folders and file placement:
 
 ## Note regarding video output
 The video output from Scooter Shooter has highly elevated gamma levels.  To correct this, apply gamma correction from within MiSTer's UI, Contrast Boost 3 recommended.
-
-## Known Issues
-1) Accuracy of video timings and audio frequency response cannot be guaranteed yet until they are measured on an original Scooter Shooter PCB
 
 ## High Score Save/Load
 Save and load of high scores is supported for this core.

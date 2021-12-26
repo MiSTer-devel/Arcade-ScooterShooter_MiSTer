@@ -181,27 +181,27 @@ module emu
 	input         OSD_STATUS
 );
 
-assign ADC_BUS  = 'Z;
-assign USER_OUT = '1;
-assign {UART_RTS, UART_TXD, UART_DTR} = 0;
-assign {SD_SCK, SD_MOSI, SD_CS} = 'Z;
-assign {SDRAM_DQ, SDRAM_A, SDRAM_BA, SDRAM_CLK, SDRAM_CKE, SDRAM_DQML, SDRAM_DQMH, SDRAM_nWE, SDRAM_nCAS, SDRAM_nRAS, SDRAM_nCS} = 'Z;
+///////// Default values for ports not used in this core /////////
 
-assign VGA_F1 = 0;
-assign VGA_SCALER = 0;
-assign FB_FORCE_BLANK = 0;
+assign {SDRAM_DQ, SDRAM_A, SDRAM_BA, SDRAM_CLK, SDRAM_CKE, SDRAM_DQML, SDRAM_DQMH, SDRAM_nWE, SDRAM_nCAS, SDRAM_nRAS, SDRAM_nCS} = 'Z;
+assign {SD_SCK, SD_MOSI, SD_CS} = 'Z;
+assign {UART_RTS, UART_TXD, UART_DTR} = 0;
+
+assign VGA_F1    = 0;
+assign VGA_SCALER= 0;
+assign USER_OUT  = '1;
+assign LED_USER  = ioctl_download;
+assign LED_DISK  = 0;
+assign LED_POWER = 0;
+assign BUTTONS   = 0;
+assign AUDIO_MIX = 0;
 assign HDMI_FREEZE = 0;
+assign FB_FORCE_BLANK = 0;
 
 wire signed [15:0] audio;
 assign AUDIO_L = audio;
 assign AUDIO_R = audio;
 assign AUDIO_S = 1;
-assign AUDIO_MIX = 0;
-
-assign LED_DISK  = 0;
-assign LED_POWER = 0;
-assign LED_USER  = ioctl_download;
-assign BUTTONS = 0;
 
 ///////////////////////////////////////////////////
 
@@ -216,16 +216,18 @@ localparam CONF_STR = {
 	"ODE,Aspect Ratio,Original,Full screen,[ARC1],[ARC2];",
 	"OC,Orientation,Vert,Horz;",
 	"OFH,Scandoubler Fx,None,HQ2x,CRT 25%,CRT 50%,CRT 75%;",
+	"OL,Game Speed,Native,60Hz Adjust;",
 	"-;",
 	"H1OR,Autosave Hiscores,Off,On;",
-	"P1,Pause options;",
+	"P1,Pause Options;",
 	"P1OP,Pause when OSD is open,On,Off;",
 	"P1OQ,Dim video after 10s,On,Off;",
 	"-;",
 	"DIP;",
 	"-;",
-	"O36,H Center,0,-1,-2,-3,-4,-5,-6,-7,+7,+6,+5,+4,+3,+2,+1;",
-	"O7A,V Center,0,-1,-2,-3,-4,-5,-6,-7,-8,-9,-10,-11,-12;",
+	"P2,Screen Centering;",
+	"P2O36,H Center,0,-1,-2,-3,-4,-5,-6,-7,+7,+6,+5,+4,+3,+2,+1;",
+	"P2O7A,V Center,0,-1,-2,-3,-4,-5,-6,-7,-8,-9,-10,-11,-12;",
 	"-;",
 	"R0,Reset;",
 	"J1,Fire,Start,Coin,Pause;",
@@ -291,8 +293,69 @@ pll pll
 	.refclk(CLK_50M),
 	.rst(0),
 	.outclk_0(CLK_49M),
+	.reconfig_to_pll(reconfig_to_pll),
+	.reconfig_from_pll(reconfig_from_pll),
 	.locked(locked)
 );
+
+wire [63:0] reconfig_to_pll;
+wire [63:0] reconfig_from_pll;
+wire        cfg_waitrequest;
+reg         cfg_write;
+reg   [5:0] cfg_address;
+reg  [31:0] cfg_data;
+
+//Reconfigure PLL to apply an ~1% underclock to Scooter Shooter to bring video timings in spec for 60Hz VSync (sourced from Genesis core)
+pll_cfg pll_cfg
+(
+	.mgmt_clk(CLK_50M),
+	.mgmt_reset(0),
+	.mgmt_waitrequest(cfg_waitrequest),
+	.mgmt_read(0),
+	.mgmt_readdata(),
+	.mgmt_write(cfg_write),
+	.mgmt_address(cfg_address),
+	.mgmt_writedata(cfg_data),
+	.reconfig_to_pll(reconfig_to_pll),
+	.reconfig_from_pll(reconfig_from_pll)
+);
+
+always @(posedge CLK_50M) begin
+	reg underclock = 0, underclock2 = 0;
+	reg [2:0] state = 0;
+	reg underclock_r;
+
+	underclock <= status[21];
+	underclock2 <= underclock;
+
+	cfg_write <= 0;
+	if(underclock2 == underclock && underclock2 != underclock_r) begin
+		state <= 1;
+		underclock_r <= underclock2;
+	end
+
+	if(!cfg_waitrequest) begin
+		if(state)
+			state <= state + 3'd1;
+		case(state)
+			1: begin
+				cfg_address <= 0;
+				cfg_data <= 0;
+				cfg_write <= 1;
+			end
+			5: begin
+				cfg_address <= 7;
+				cfg_data <= underclock_r ? 3268298314 : 3639383488;
+				cfg_write <= 1;
+			end
+			7: begin
+				cfg_address <= 2;
+				cfg_data <= 0;
+				cfg_write <= 1;
+			end
+		endcase
+	end
+end
 
 wire reset = RESET | status[0] | buttons[1];
 
@@ -303,11 +366,6 @@ reg btn_down     = 0;
 reg btn_left     = 0;
 reg btn_right    = 0;
 reg btn_fire     = 0;
-reg btn_up2      = 0;
-reg btn_down2    = 0;
-reg btn_left2    = 0;
-reg btn_right2   = 0;
-reg btn_fire2    = 0;
 reg btn_coin1    = 0;
 reg btn_coin2    = 0;
 reg btn_1p_start = 0;
@@ -333,13 +391,7 @@ always @(posedge CLK_49M) begin
 			'h72: btn_down    <= pressed; // down
 			'h6B: btn_left    <= pressed; // left
 			'h74: btn_right   <= pressed; // right
-			'h14: btn_fire    <= pressed; // ctrl	
-
-			'h1d: btn_up2     <= pressed; // w
-			'h1b: btn_down2   <= pressed; // s
-			'h1c: btn_left2   <= pressed; // a
-			'h23: btn_right2  <= pressed; // d
-			'h2a: btn_fire2   <= pressed; // v																					
+			'h14: btn_fire    <= pressed; // ctrl						
 		endcase
 	end
 end
@@ -354,11 +406,11 @@ wire m_right1   = btn_right   | joystick_0[0];
 wire m_fire1    = btn_fire    | joystick_0[4];
 
 //Player 2
-wire m_up2      = btn_up2      | joystick_1[3];
-wire m_down2    = btn_down2    | joystick_1[2];
-wire m_left2    = btn_left2    | joystick_1[1];
-wire m_right2   = btn_right2   | joystick_1[0];
-wire m_fire2    = btn_fire2    | joystick_1[4];
+wire m_up2      = btn_up      | joystick_1[3];
+wire m_down2    = btn_down    | joystick_1[2];
+wire m_left2    = btn_left    | joystick_1[1];
+wire m_right2   = btn_right   | joystick_1[0];
+wire m_fire2    = btn_fire    | joystick_1[4];
 
 //Start/coin
 wire m_start1   = btn_1p_start | joystick_0[5];
@@ -396,6 +448,7 @@ wire ce_pix;
 
 wire rotate_ccw = 0;
 wire no_rotate = status[12] | direct_video;
+wire flip = ~no_rotate;
 screen_rotate screen_rotate(.*);
 
 arcade_video #(256,12) arcade_video
@@ -431,6 +484,9 @@ ScooterShooter ScooterShooter_inst
 	.p2_fire(~m_fire2),
 	
 	.dipsw({~dip_sw[2], ~dip_sw[1], ~dip_sw[0]}),          // input [19:0] dipsw
+	
+	//Flag to signal that Scooter Shooter has been underclocked to normalize video timings in order to maintain consistent sound timings and pitch
+	.underclock(status[21]),
 	
 	.sound(audio),                                         // output [15:0] sound
 	
