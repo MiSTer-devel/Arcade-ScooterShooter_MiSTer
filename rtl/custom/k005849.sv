@@ -3,7 +3,7 @@
 //  SystemVerilog implementation of the Konami 005849 custom tilemap
 //  generator
 //  Adapted from Green Beret core Copyright (C) 2013, 2019 MiSTer-X
-//  Copyright (C) 2021 Ace
+//  Copyright (C) 2021, 2022 Ace
 //
 //  Permission is hereby granted, free of charge, to any person obtaining a
 //  copy of this software and associated documentation files (the "Software"),
@@ -80,8 +80,6 @@ module k005849
 	input         hs_write_enable,
 	input         hs_access_write
 );
-
-
 
 //------------------------------------------------------- Signal outputs -------------------------------------------------------//
 
@@ -382,8 +380,8 @@ dpram_dc #(.widthad_a(12)) VRAM_SPR
 	.q_a(spriteram_Dout),
 	.wren_a(spriteram_cs & READ),
 	
-	.clock_b(~CK49),
-	.address_b(spriteram_A),
+	.clock_b(CK49),
+	.address_b({3'b000, sprite_bank, spritecache_A[7:0]}),
 	.q_b(spriteram_D)
 );
 `else
@@ -401,8 +399,8 @@ dpram_dc #(.widthad_a(12)) VRAM_SPR
 	.q_a(spriteram_Dout),
 	.wren_a(VRAM_SPR_WE),
 	
-	.clock_b(~CK49),
-	.address_b(spriteram_A),
+	.clock_b(CK49),
+	.address_b({3'b000, sprite_bank, spritecache_A[7:0]}),
 	.q_b(spriteram_D)
 );
 //Sprite RAM shadow for highscore read access
@@ -419,6 +417,34 @@ dpram_dc #(.widthad_a(12)) VRAM_SPR_SHADOW
 );
 `endif
 
+//Sprite cache - this isn't present on the original 005849; it is used here to simulate framebuffer-like behavior where
+//sprites are rendered with a 1-frame delay without using an actual framebuffer to save on limited FPGA BRAM resources
+//This cache will copy all sprites from sprite RAM during an active frame for the sprite logic to read back on the next
+//frame
+reg [8:0] spritecache_A = 9'd0;
+always_ff @(posedge CK49) begin
+	if(cen_6m) begin
+		if(spritecache_we)
+			spritecache_A <= spritecache_A + 9'd1;
+		else if(vblank)
+			spritecache_A <= 9'd0;
+		else
+			spritecache_A <= spritecache_A;
+	end
+end	
+wire [7:0] spriteram_Dcache;
+wire spritecache_we = ~vblank & ~spritecache_A[8];
+dpram_dc #(.widthad_a(9)) SPR_CACHE
+(
+	.clock_a(CK49),
+	.address_a({frame_odd_even, spritecache_A[7:0]}),
+	.data_a(spriteram_D),
+	.wren_a(spritecache_we),
+	
+	.clock_b(~CK49),
+	.address_b({~frame_odd_even, spriteram_A}),
+	.q_b(spriteram_Dcache)
+);
 
 //-------------------------------------------------------- Tilemap layer -------------------------------------------------------//
 
@@ -484,86 +510,85 @@ wire [8:0] sprite_vpos = flipscreen ? v_cnt + 9'd17 : v_cnt + 9'd18;
 //Sprite state machine
 reg [5:0] sprite_index;
 reg [1:0] sprite_offset;
-reg [7:0] sprite_attrib0, sprite_attrib1, sprite_attrib2, sprite_attrib3;
 reg [2:0] sprite_fsm_state;
+reg [8:0] sprite_x, sprite_code;
+reg [7:0] sprite_y;
+reg [4:0] sprite_width;
+reg [3:0] sprite_color;
+reg sprite_hflip, sprite_vflip;
 always_ff @(posedge CK49) begin
 	if(sprite_hpos == 9'd0) begin
-		xcnt <= 0;
-		sprite_index <= 0;
-		sprite_offset <= 3;
-		sprite_fsm_state <= 1;
+		sprite_width <= 5'd0;
+		sprite_index <= 6'd0;
+		sprite_offset <= 2'd3;
+		sprite_fsm_state <= 3'd1;
 	end
 	else 
 		case(sprite_fsm_state)
 			0: /* empty */ ;
 			1: begin
+				//If the sprite limit has been reached, hold the state machine in an empty state, otherwise latch the
+				//sprite Y attribute
 				if(sprite_index > 8'd47) //Render up to 48 sprites at once (index 0 - 47)
-					sprite_fsm_state <= 0;
-					//When the sprite Y attribute is set to 0, skip the current sprite, otherwise obtain the sprite Y attribute
-					//and scan out the other sprite attributes
-					else begin
-						if(hy) begin
-							sprite_attrib3 <= spriteram_D;
-							sprite_offset <= 2;
-							sprite_fsm_state <= sprite_fsm_state + 3'd1;
-						end
-						else sprite_index <= sprite_index + 6'd1;
-					end
+					sprite_fsm_state <= 3'd0;
+				else begin
+					sprite_y <= spriteram_Dcache;
+					sprite_offset <= 2'd2;
+					sprite_fsm_state <= sprite_fsm_state + 3'd1;
 				end
+			end
 			2: begin
-					sprite_attrib2 <= spriteram_D;
-					sprite_offset <= 1;
+				//Skip the current sprite if it's inactive, otherwise latch X position bits [7:0]
+				if(sprite_active) begin
+					sprite_x[7:0] <= spriteram_Dcache;
+					sprite_offset <= 2'd1;
 					sprite_fsm_state <= sprite_fsm_state + 3'd1;
 				end
-			3: begin
-					sprite_attrib1 <= spriteram_D;
-					sprite_offset <= 0;
-					sprite_fsm_state <= sprite_fsm_state + 3'd1;
-				end
-			4: begin
-					sprite_attrib0 <= spriteram_D;
-					sprite_offset <= 3;
+				else begin
 					sprite_index <= sprite_index + 6'd1;
-					xcnt <= 5'b10000;
-					sprite_fsm_state <= sprite_fsm_state + 3'd1;
+					sprite_offset <= 2'd3;
+					sprite_fsm_state <= 3'd1;
 				end
+			end
+			3: begin
+				//Latch bit 8 of the sprite X position and sprite code, as well as the sprite color and H/V flip attributes
+				sprite_x[8] <= spriteram_Dcache[7];
+				sprite_code[8] <= spriteram_Dcache[6];
+				sprite_vflip <= spriteram_Dcache[5] ^ flipscreen;
+				sprite_hflip <= spriteram_Dcache[4] ^ flipscreen;
+				sprite_color <= spriteram_Dcache[3:0];
+				sprite_offset <= 2'd0;
+				sprite_fsm_state <= sprite_fsm_state + 3'd1;
+			end
+			4: begin
+				//Latch bits [7:0] of the sprite code and set up the sprite width to write the sprite to the line buffer
+				sprite_code[7:0] <= spriteram_Dcache;
+				sprite_offset <= 2'd3;
+				sprite_index <= sprite_index + 6'd1;
+				sprite_width <= 5'b10000;
+				sprite_fsm_state <= sprite_fsm_state + 3'd1;
+			end
 			5: begin
-					xcnt <= xcnt + 5'd1;
-					sprite_fsm_state <= wre ? sprite_fsm_state : 3'd1;
-				end
+				sprite_width <= sprite_width + 5'd1;
+				sprite_fsm_state <= wre ? sprite_fsm_state : 3'd1;
+			end
 			default:;
 		endcase
 end
 
-//Subtract sprite attribute byte 2 with bit 7 of sprite attribute byte 1 to obtain sprite X position and XOR with the
-//flipscreen bit
-wire [8:0] sprite_x = ({1'b0, sprite_attrib2} - {sprite_attrib1[7], 8'h00}) ^ {9{flipscreen}};
+//Subtract vertical sprite position from sprite Y parameter to obtain sprite height
+wire [8:0] sprite_height = {1'b0, sprite_y} - sprite_vpos;
 
-//If the sprite state machine is in state 1, obtain sprite Y position directly from sprite RAM, otherwise obtain it from
-//sprite attribute byte 3 and XOR with the flipscreen bit
-wire [7:0] sprite_y = (sprite_fsm_state == 3'd1) ? spriteram_D ^ {8{flipscreen}} : sprite_attrib3 ^ {8{flipscreen}};
+//Set when a sprite is active
+wire sprite_active = (sprite_y != 0) & (sprite_height[8:5] == 4'b1111) & (sprite_height[4] ^ ~flipscreen);
 
-//Sprite flip attributes are stored in bits 4 (horizontal) and 5 (vertical) of sprite attribute byte 1
-wire sprite_hflip = sprite_attrib1[4] ^ flipscreen;
-wire sprite_vflip = sprite_attrib1[5] ^ flipscreen;
-
-//Sprite code is bit 6 of sprite attribute byte 1 appended to sprite attribute byte 0
-wire [8:0] sprite_code = {sprite_attrib1[6], sprite_attrib0};
-
-//Sprite color is the lower 4 bits of sprite attribute byte 1
-wire [3:0] sprite_color = sprite_attrib1[3:0];
-
-wire [8:0] ht = {1'b0, sprite_y} - sprite_vpos;
-wire hy = (sprite_y != 0) & (ht[8:5] == 4'b1111) & (ht[4] ^ ~flipscreen);
-
-reg [4:0] xcnt;
-wire [3:0] lx = xcnt[3:0] ^ {4{sprite_hflip}};
-wire [3:0] ly = ht[3:0] ^ {4{~sprite_vflip}};
+wire [3:0] lx = sprite_width[3:0] ^ {4{sprite_hflip}};
+wire [3:0] ly = sprite_height[3:0] ^ {4{~sprite_vflip}};
 
 //Assign address outputs to sprite ROMs
 assign S = {sprite_code, ly[3], lx[3], ly[2:0], lx[2:1]};
 
-//Multiplex sprite ROM data down from 8 bits to 4 using bit 0 of the horizontal position
+//Multiplex sprite ROM data down from 8 bits to 4 using bit 0 of the horizontal pixel
 wire [3:0] sprite_pixel = lx[0] ? SD[3:0] : SD[7:4];
 
 //Latch the sprite bank from bit 3 of register 3 on the rising edge of VSync and XNOR with the added SPFL signal to flip this bit
@@ -573,13 +598,13 @@ reg sprite_bank = 0;
 reg old_vsync;
 always_ff @(posedge CK49) begin
 	old_vsync <= VSYC;
-	if(!VSYC)
+	if(!RES)
 		sprite_bank <= 0;
 	else if(!old_vsync && VSYC)
 		sprite_bank <= ~(reg3[3] ^ SPFL);
 end
 
-wire [11:0] spriteram_A = {3'b000, sprite_bank, sprite_index, sprite_offset};
+wire [7:0] spriteram_A = {sprite_index, sprite_offset};
 
 //Address output to sprite LUT PROM
 assign OCF = sprite_color;
@@ -590,21 +615,21 @@ assign OCB = sprite_pixel;
 //The sprite line buffer is external to the 005849 and consists of four 4416 DRAM chips.  For simplicity, both the logic for the
 //sprite line buffer and the sprite line buffer itself has been made internal to the 005849 implementation.
 
-//Enable writing to sprite line buffer when bit 4 of xcnt is 1
-wire wre = xcnt[4];
+//Enable writing to sprite line buffer when bit 4 of the sprite width is 1
+wire wre = sprite_width[4];
 
-//Set sprite ID as bit 0 of the sprite vertical position
-wire sprite_id = sprite_vpos[0];
+//Set sprite line buffer bank as bit 0 of the sprite vertical position
+wire sprite_lbuff_bank = sprite_vpos[0];
 
-//Sum sprite X position with the lower 4 bits of xcnt to address the sprite line buffer
-wire [8:0] wpx = sprite_x + xcnt[3:0];
+//Sum sprite X position with the lower 4 bits of the sprite width to address the sprite line buffer
+wire [8:0] wpx = sprite_x + sprite_width[3:0];
 
 //Generate sprite line buffer write addresses
 reg [9:0] lbuff_A;
 reg [3:0] lbuff_Din;
 reg lbuff_we;
 always_ff @(posedge CK49) begin
-	lbuff_A <= {~sprite_id, wpx};
+	lbuff_A <= {~sprite_lbuff_bank, wpx};
 	lbuff_we <= wre;
 end
 
@@ -618,7 +643,7 @@ reg [9:0] radr0 = 10'd0;
 reg [9:0] radr1 = 10'd1;
 always_ff @(posedge CK49) begin
 	if(cen_6m)
-		radr0 <= {sprite_id, flipscreen ? sprite_hpos - 9'd241 : sprite_hpos};
+		radr0 <= {sprite_lbuff_bank, flipscreen ? sprite_hpos - 9'd241 : sprite_hpos};
 end
 
 //Sprite line buffer

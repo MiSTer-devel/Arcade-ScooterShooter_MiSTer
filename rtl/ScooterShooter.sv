@@ -1,7 +1,7 @@
 //============================================================================
 // 
 //  Scooter Shooter PCB model
-//  Copyright (C) 2021 Ace
+//  Copyright (C) 2021, 2022 Ace
 //
 //  Permission is hereby granted, free of charge, to any person obtaining a
 //  copy of this software and associated documentation files (the "Software"),
@@ -123,7 +123,7 @@ jtframe_frac_cen sound_cen
 (
 	.clk(clk_49m),
 	.n(10'd50),
-	.m(10'd786),
+	.m(10'd792),
 	.cen({1'bZ, cen_3m_adjust})
 );
 
@@ -145,7 +145,7 @@ mc6809is u12A
 	.nIRQ(irq),
 	.nFIRQ(firq),
 	.nNMI(nmi),
-	.nHALT(~pause),	 
+	.nHALT(~pause),
 	.nRESET(reset),
 	.nDMABREQ(1)
 );
@@ -154,6 +154,7 @@ wire cs_dip2 = ~n_iocs & (mc6809e_A[10:8] == 3'b001) & mc6809e_rw;
 wire cs_dip3 = ~n_iocs & (mc6809e_A[10:8] == 3'b010) & mc6809e_rw;
 wire cs_palettelatch = ~n_iocs & (mc6809e_A[10:8] == 3'b000) & ~mc6809e_rw;
 wire cs_soundlatch = ~n_iocs & (mc6809e_A[10:8] == 3'b001) & ~mc6809e_rw;
+wire cs_soundirq = ~n_iocs & (mc6809e_A[10:8] == 3'b010) & ~mc6809e_rw;
 wire cs_controls_dip1 = ~n_iocs & (mc6809e_A[10:8] == 3'b011) & mc6809e_rw;
 wire cs_k005849 = (mc6809e_A[15:14] == 2'b00);
 wire cs_rom1 = (mc6809e_A[15:14] == 2'b01 || mc6809e_A[15:14] == 2'b10) & mc6809e_rw;
@@ -216,7 +217,7 @@ end
 reg sound_irq = 1;
 always_ff @(posedge clk_49m) begin
 	if(cen_3m) begin
-		if(cs_soundlatch)
+		if(cs_soundirq)
 			sound_irq <= 1;
 		else
 			sound_irq <= 0;
@@ -308,7 +309,6 @@ wire [15:0] spriterom_A;
 wire [15:0] tilerom_A;
 wire [7:0] k005849_D, tilemap_lut_A, sprite_lut_A;
 wire [4:0] color_A;
-wire [1:0] h_cnt;
 wire n_iocs, irq, firq, nmi;
 k005849 u8E
 (
@@ -486,6 +486,33 @@ color_prom_3 u3F
 
 //----------------------------------------------------- Final audio output -----------------------------------------------------//
 
+//Remove DC offset from SSG outputs and apply gain to prevent losing quiet sounds after low-pass filtering
+wire signed [15:0] ym2203_ssgA_dcrm, ym2203_ssgB_dcrm, ym2203_ssgC_dcrm;
+jt49_dcrm2 #(16) dcrm_ssgA
+(
+	.clk(clk_49m),
+	.cen(dcrm_cen),
+	.rst(~reset),
+	.din({3'd0, ym2203_ssgA_raw, 5'd0}),
+	.dout(ym2203_ssgA_dcrm)
+);
+jt49_dcrm2 #(16) dcrm_ssgB
+(
+	.clk(clk_49m),
+	.cen(dcrm_cen),
+	.rst(~reset),
+	.din({3'd0, ym2203_ssgB_raw, 5'd0}),
+	.dout(ym2203_ssgB_dcrm)
+);
+jt49_dcrm2 #(16) dcrm_ssgC
+(
+	.clk(clk_49m),
+	.cen(dcrm_cen),
+	.rst(~reset),
+	.din({3'd0, ym2203_ssgC_raw, 5'd0}),
+	.dout(ym2203_ssgC_dcrm)
+);
+
 //Scooter Shooter uses a 4.823KHz low-pass filter for the FM side of its YM2203 - filter the audio accordingly here.
 wire signed [15:0] ym2203_fm_lpf;
 sshooter_fm_lpf lpf_fm
@@ -520,33 +547,6 @@ sshooter_ssg_lpf lpf_ssgC
 	.reset(~reset),
 	.in(ym2203_ssgC_dcrm),
 	.out(ym2203_ssgC_lpf)
-);
-
-//Remove DC offset from SSG outputs and apply gain to prevent losing quiet sounds after low-pass filtering
-wire signed [15:0] ym2203_ssgA_dcrm, ym2203_ssgB_dcrm, ym2203_ssgC_dcrm;
-jt49_dcrm2 #(16) dcrm_ssgA
-(
-	.clk(clk_49m),
-	.cen(dcrm_cen),
-	.rst(~reset),
-	.din({3'd0, ym2203_ssgA_raw, 5'd0}),
-	.dout(ym2203_ssgA_dcrm)
-);
-jt49_dcrm2 #(16) dcrm_ssgB
-(
-	.clk(clk_49m),
-	.cen(dcrm_cen),
-	.rst(~reset),
-	.din({3'd0, ym2203_ssgB_raw, 5'd0}),
-	.dout(ym2203_ssgB_dcrm)
-);
-jt49_dcrm2 #(16) dcrm_ssgC
-(
-	.clk(clk_49m),
-	.cen(dcrm_cen),
-	.rst(~reset),
-	.din({3'd0, ym2203_ssgC_raw, 5'd0}),
-	.dout(ym2203_ssgC_dcrm)
 );
 
 //Apply the switchable low-pass filters and attenuate SSG outputs back to raw levels
